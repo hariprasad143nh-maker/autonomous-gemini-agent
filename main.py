@@ -32,32 +32,29 @@ def init_agent(req: InitRequest):
 @app.post("/api/agent/force-run")
 def force_run(agentId: str):
     if not client:
-        return {"error": "GEMINI_API_KEY is missing or invalid in Render."}
+        return {"error": "GEMINI_API_KEY is missing."}
         
     agent = database.get_agent(agentId)
-    if not agent: 
-        return {"error": "Agent not found in database."}
     
     try:
         feed = feedparser.parse("https://hnrss.org/newest?q=AI")
-        if not feed.entries: 
-            return {"error": "Could not find any news articles."}
         candidate = feed.entries[0]
         
         prompt = f"You are {agent['name']}, an expert in {agent['domain']}. Write a 1-paragraph exciting post about this news: {candidate.get('title')}. Do not use JSON, just write a normal paragraph."
         
-        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        # FIXED: Using a valid model name!
+        response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         post_id = f"p-{str(uuid.uuid4())[:8]}"
         
         database.save_post(
             post_id=post_id, 
             agent_id=agentId, 
             text=response.text, 
-            rationale="Bulletproof test publish.", 
+            rationale="Bypassed rate limits and model errors!", 
             sources=[candidate.get("link")], 
             created_at=database.get_utc_now_iso()
         )
-        return {"status": "SUCCESS", "message": "Ada successfully published!"}
+        return {"status": "SUCCESS"}
         
     except Exception as e:
         return {"error": f"Crash details: {str(e)}"}
