@@ -1,188 +1,164 @@
-from contextlib import asynccontextmanager
-from datetime import datetime
 import os
-import sqlite3
-from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException
+import uuid
+import json
 import feedparser
-from google import genai
-from google.genai import types
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from apscheduler.schedulers.background import BackgroundScheduler
+import google.genai as genai
 
-# ==========================================
-# 1. MEMORY DATABASE (SQLite Setup)
-# ==========================================
-DB_FILE = "agent_memory.db"
+import database
 
+app = FastAPI(title="Autonomous AI Creator")
+database.init_db()
 
-def init_db():
-  """Creates the database table if it doesn't exist."""
-  conn = sqlite3.connect(DB_FILE)
-  cursor = conn.cursor()
-  cursor.execute("""
-        CREATE TABLE IF NOT EXISTS logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            source TEXT,
-            prompt TEXT,
-            response TEXT
-        )
-    """)
-  conn.commit()
-  conn.close()
+client = genai.Client()
 
+RSS_FEEDS = [
+    "https://hnrss.org/newest?q=AI+OR+LLM+OR+Security",
+    "https://rss.arxiv.org/rss/cs.CR",
+    "https://rss.arxiv.org/rss/cs.AI",
+    "https://techcrunch.com/category/artificial-intelligence/feed/"
+]
 
-def log_interaction(source: str, prompt: str, response: str):
-  """Saves a conversation or background task to the database."""
-  conn = sqlite3.connect(DB_FILE)
-  cursor = conn.cursor()
-  cursor.execute(
-      "INSERT INTO logs (timestamp, source, prompt, response) VALUES (?, ?, ?,"
-      " ?)",
-      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), source, prompt, response),
-  )
-  conn.commit()
-  conn.close()
+class Persona(BaseModel):
+    name: str
+    domain: str
 
+class InitRequest(BaseModel):
+    persona: Persona
 
-# ==========================================
-# 2. AGENT TOOLS (Functions Gemini Can Call)
-# ==========================================
-def get_current_time() -> str:
-  """Returns the current date and time."""
-  return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# This keeps your server awake!
+@app.get("/")
+def health_check():
+    return {"status": "awake and running"}
 
+@app.post("/api/agent/init")
+def init_agent(req: InitRequest):
+    agent_id = str(uuid.uuid4())
+    database.save_agent(agent_id, req.persona.name, req.persona.domain)
+    run_autonomous_cycle_for_agent(agent_id)
+    return {"agentId": agent_id}
 
-def fetch_tech_news() -> str:
-  """Fetches the top 5 tech news headlines from an RSS feed."""
-  try:
-    feed = feedparser.parse("https://news.ycombinator.com/rss")
-    headlines = []
-    for entry in feed.entries[:5]:
-      headlines.append(f"- {entry.title} ({entry.link})")
-    return "\n".join(headlines) if headlines else "No headlines found."
-  except Exception as e:
-    return f"Error fetching news: {str(e)}"
+@app.get("/api/agent/feed")
+def get_agent_feed(agentId: str):
+    agent = database.get_agent(agentId)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    posts = database.get_feed(agentId)
+    return {"posts": posts}
 
+def run_autonomous_cycle_for_agent(agent_id: str):
+    agent = database.get_agent(agent_id)
+    if not agent:
+        return
 
-def read_recent_memory() -> str:
-  """Reads the last 3 stored logs from the database memory."""
-  conn = sqlite3.connect(DB_FILE)
-  cursor = conn.cursor()
-  cursor.execute(
-      "SELECT timestamp, source, prompt, response FROM logs ORDER BY id DESC"
-      " LIMIT 3"
-  )
-  rows = cursor.fetchall()
-  conn.close()
+    name = agent["name"]
+    domain = agent["domain"]
 
-  if not rows:
-    return "Memory is currently empty."
+    discovered_items = []
+    for feed_url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:5]:
+                link = entry.get("link")
+                title = entry.get("title")
+                summary = entry.get("summary", "")
+                
+                if link and not database.is_topic_processed(link):
+                    discovered_items.append({
+                        "title": title,
+                        "summary": summary,
+                        "url": link
+                    })
+        except Exception as e:
+            print(f"Error fetching feed {feed_url}: {e}")
 
-  output = ""
-  for r in rows:
-    output += (
-        f"[{r[0]}] Source: {r[1]}\nPrompt: {r[2]}\nResponse: {r[3]}\n---\n"
-    )
-  return output
+    if not discovered_items:
+        print("No new candidate topics discovered.")
+        return
 
+    recent_posts, recent_topics = database.get_memory_context(agent_id)
+    history_posts_str = "\n---\n".join(recent_posts) if recent_posts else "No previous posts."
+    history_topics_str = "\n".join(recent_topics) if recent_topics else "No previous topics logged."
 
-# ==========================================
-# 3. BACKGROUND AUTOMATION (Scheduler)
-# ==========================================
-def automated_background_task():
-  """Task that runs on a timer independently of user requests."""
-  api_key = os.getenv("GEMINI_API_KEY")
-  if not api_key:
-    return
+    for candidate in discovered_items:
+        prompt = f"""
+You are {name}, a premier researcher and expert in {domain}.
+You have strict publishing standards. You only publish posts that offer high technical depth, critical safety/security analysis, or fresh industry insights. You intentionally reject shallow fluff or generic news.
 
-  print("\n[Scheduler] Running background task: Fetching news summary...")
-  try:
-    client = genai.Client(api_key=api_key)
-    prompt = (
-        "Fetch the latest tech news using your tool and give a brief summary."
-    )
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            tools=[fetch_tech_news, get_current_time]
-        ),
-    )
-    log_interaction("Automated Scheduler", prompt, response.text)
-    print("[Scheduler] Summary created and saved to database!\n")
-  except Exception as e:
-    print(f"[Scheduler Error] {e}")
+Candidate Topic to Evaluate:
+Title: {candidate['title']}
+Summary: {candidate['summary']}
+URL: {candidate['url']}
 
+Memory - Previously Published Posts:
+{history_posts_str}
+
+Memory - Recently Processed/Rejected Topics:
+{history_topics_str}
+
+Task:
+1. Evaluate whether this topic meets your publishing standards and aligns with your domain expertise.
+2. Ensure it does not duplicate ideas or themes from previously published posts.
+
+Return ONLY a valid JSON object with:
+- "should_publish": true or false
+- "rejection_reason": (if false, give a detailed reason why it failed your standards; if true, leave empty)
+- "post_text": (if true, write an insightful, engaging 2-3 paragraph post in your unique editorial voice)
+- "rationale": (if true, explicitly cover: 1) Why you selected this topic, 2) Why it is relevant right now, 3) Why it was chosen over other candidate topics evaluated)
+"""
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            
+            raw_text = response.text.strip()
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:-3].strip()
+            elif raw_text.startswith("```"):
+                raw_text = raw_text[3:-3].strip()
+                
+            result = json.loads(raw_text)
+            
+            if not result.get("should_publish"):
+                reason = result.get("rejection_reason", "Failed editorial standards")
+                print(f"Topic Rejected: {candidate['title']} | Reason: {reason}")
+                database.record_topic(candidate['url'], agent_id, candidate['title'], "REJECTED", reason)
+                continue
+
+            post_id = f"p-{str(uuid.uuid4())[:8]}"
+            created_at = database.get_utc_now_iso()
+            
+            database.save_post(
+                post_id=post_id,
+                agent_id=agent_id,
+                text=result["post_text"],
+                rationale=result["rationale"],
+                sources=[candidate["url"]],
+                created_at=created_at
+            )
+            
+            database.record_topic(candidate['url'], agent_id, candidate['title'], "PUBLISHED")
+            print(f"Successfully published post: {post_id} for agent: {name}")
+            break
+
+        except Exception as e:
+            print(f"Error evaluating candidate {candidate['title']}: {e}")
+
+def global_autonomous_job():
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM agents")
+    agents = cursor.fetchall()
+    conn.close()
+    
+    for agent in agents:
+        run_autonomous_cycle_for_agent(agent["id"])
 
 scheduler = BackgroundScheduler()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-  # Runs on server startup
-  init_db()
-  # Automatically runs every 30 minutes
-  scheduler.add_job(automated_background_task, "interval", minutes=30)
-  scheduler.start()
-  print("[System] Database ready and Background Scheduler started.")
-  yield
-  # Runs on server shutdown
-  scheduler.shutdown()
-
-
-# ==========================================
-# 4. FASTAPI SERVER & ENDPOINTS
-# ==========================================
-app = FastAPI(title="Autonomous AI Agent", lifespan=lifespan)
-
-
-class PromptRequest(BaseModel):
-  prompt: str
-
-
-@app.get("/")
-def read_root():
-  return {"message": "Autonomous AI Agent server is live!"}
-
-
-@app.get("/memory")
-def view_memory():
-  """View all stored logs in the database."""
-  conn = sqlite3.connect(DB_FILE)
-  cursor = conn.cursor()
-  cursor.execute("SELECT * FROM logs ORDER BY id DESC")
-  rows = cursor.fetchall()
-  conn.close()
-  return {"total_logs": len(rows), "logs": rows}
-
-
-@app.post("/generate")
-async def generate_response(request: PromptRequest):
-  api_key = os.getenv("GEMINI_API_KEY")
-  if not api_key:
-    raise HTTPException(status_code=500, detail="GEMINI_API_KEY is missing.")
-
-  if not request.prompt.strip():
-    raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
-
-  try:
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=request.prompt,
-        config=types.GenerateContentConfig(
-            tools=[get_current_time, fetch_tech_news, read_recent_memory]
-        ),
-    )
-
-    # Save interaction to SQLite database
-    log_interaction("User Request", request.prompt, response.text)
-
-    return {
-        "status": "success",
-        "prompt": request.prompt,
-        "response": response.text,
-    }
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=str(e))
+scheduler.add_job(global_autonomous_job, 'interval', minutes=30)
+scheduler.start()
