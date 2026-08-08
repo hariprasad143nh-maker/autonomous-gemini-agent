@@ -28,7 +28,6 @@ class Persona(BaseModel):
 class InitRequest(BaseModel):
     persona: Persona
 
-# This keeps your server awake!
 @app.get("/")
 def health_check():
     return {"status": "awake and running"}
@@ -37,8 +36,13 @@ def health_check():
 def init_agent(req: InitRequest):
     agent_id = str(uuid.uuid4())
     database.save_agent(agent_id, req.persona.name, req.persona.domain)
-    run_autonomous_cycle_for_agent(agent_id)
+    run_autonomous_cycle_for_agent(agent_id, force=True)
     return {"agentId": agent_id}
+
+@app.post("/api/agent/force-run")
+def force_run(agentId: str):
+    run_autonomous_cycle_for_agent(agentId, force=True)
+    return {"status": "cycle completed"}
 
 @app.get("/api/agent/feed")
 def get_agent_feed(agentId: str):
@@ -49,9 +53,10 @@ def get_agent_feed(agentId: str):
     posts = database.get_feed(agentId)
     return {"posts": posts}
 
-def run_autonomous_cycle_for_agent(agent_id: str):
+def run_autonomous_cycle_for_agent(agent_id: str, force: bool = False):
     agent = database.get_agent(agent_id)
     if not agent:
+        print(f"Agent {agent_id} not found.", flush=True)
         return
 
     name = agent["name"]
@@ -66,17 +71,17 @@ def run_autonomous_cycle_for_agent(agent_id: str):
                 title = entry.get("title")
                 summary = entry.get("summary", "")
                 
-                if link and not database.is_topic_processed(link):
+                if link and (force or not database.is_topic_processed(link)):
                     discovered_items.append({
                         "title": title,
                         "summary": summary,
                         "url": link
                     })
         except Exception as e:
-            print(f"Error fetching feed {feed_url}: {e}")
+            print(f"Error fetching feed {feed_url}: {e}", flush=True)
 
     if not discovered_items:
-        print("No new candidate topics discovered.")
+        print("No new candidate topics discovered.", flush=True)
         return
 
     recent_posts, recent_topics = database.get_memory_context(agent_id)
@@ -126,7 +131,7 @@ Return ONLY a valid JSON object with:
             
             if not result.get("should_publish"):
                 reason = result.get("rejection_reason", "Failed editorial standards")
-                print(f"Topic Rejected: {candidate['title']} | Reason: {reason}")
+                print(f"Topic Rejected: {candidate['title']} | Reason: {reason}", flush=True)
                 database.record_topic(candidate['url'], agent_id, candidate['title'], "REJECTED", reason)
                 continue
 
@@ -143,11 +148,11 @@ Return ONLY a valid JSON object with:
             )
             
             database.record_topic(candidate['url'], agent_id, candidate['title'], "PUBLISHED")
-            print(f"Successfully published post: {post_id} for agent: {name}")
+            print(f"Successfully published post: {post_id} for agent: {name}", flush=True)
             break
 
         except Exception as e:
-            print(f"Error evaluating candidate {candidate['title']}: {e}")
+            print(f"Error evaluating candidate {candidate['title']}: {e}", flush=True)
 
 def global_autonomous_job():
     conn = database.get_db_connection()
