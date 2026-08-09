@@ -1,7 +1,6 @@
 ﻿fastapi
 uvicorn
-feedparser
-apscheduler
-google-genai
 pydantic
-psycopg2-binary
+apscheduler
+feedparser
+openai

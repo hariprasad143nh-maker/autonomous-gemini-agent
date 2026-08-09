@@ -1,16 +1,17 @@
-﻿import os, uuid, feedparser
+import os, uuid, feedparser
 from fastapi import FastAPI
 from pydantic import BaseModel
-import google.genai as genai
+from openai import OpenAI
 import database
 
 app = FastAPI()
 database.init_db()
 
-try:
-    client = genai.Client()
-except Exception as e:
-    client = None
+# Initialize Groq client using OpenAI-compatible SDK
+client = OpenAI(
+    api_key=os.environ.get("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
+)
 
 class Persona(BaseModel):
     name: str
@@ -31,9 +32,6 @@ def init_agent(req: InitRequest):
 
 @app.post("/api/agent/force-run")
 def force_run(agentId: str):
-    if not client:
-        return {"error": "GEMINI_API_KEY is missing."}
-        
     agent = database.get_agent(agentId)
     if not agent:
         return {"error": "Agent not found."}
@@ -42,17 +40,21 @@ def force_run(agentId: str):
         feed = feedparser.parse("https://hnrss.org/newest?q=AI")
         candidate = feed.entries[0]
         
-        prompt = f"You are {agent['name']}, an expert in {agent['domain']}. Write a 1-paragraph exciting post about this news: {candidate.get('title')}. Do not use JSON, just write a normal paragraph."
+        prompt = f"You are {agent['name']}, an expert in {agent['domain']}. Write a 1-paragraph exciting post about this news: {candidate.get('title')}."
         
-        # Using a widely compatible stable model string
-        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        # Call Groq's high-speed Llama 3 model
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        post_text = response.choices[0].message.content
+        
         post_id = f"p-{str(uuid.uuid4())[:8]}"
-        
         database.save_post(
             post_id=post_id, 
             agent_id=agentId, 
-            text=response.text, 
-            rationale="Successful hackathon generation!", 
+            text=post_text, 
+            rationale="Generated via Groq free tier!", 
             sources=[candidate.get("link")], 
             created_at=database.get_utc_now_iso()
         )
