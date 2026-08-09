@@ -7,7 +7,7 @@ import database
 app = FastAPI()
 database.init_db()
 
-# Initialize Groq client using OpenAI-compatible SDK
+# Initialize Groq client using OpenAI SDK
 client = OpenAI(
     api_key=os.environ.get("GROQ_API_KEY"),
     base_url="https://api.groq.com/openai/v1"
@@ -42,7 +42,6 @@ def force_run(agentId: str):
         
         prompt = f"You are {agent['name']}, an expert in {agent['domain']}. Write a 1-paragraph exciting post about this news: {candidate.get('title')}."
         
-        # Call Groq's high-speed Llama 3 model
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}]
@@ -54,7 +53,7 @@ def force_run(agentId: str):
             post_id=post_id, 
             agent_id=agentId, 
             text=post_text, 
-            rationale="Generated via Groq free tier!", 
+            rationale="Generated via Groq!", 
             sources=[candidate.get("link")], 
             created_at=database.get_utc_now_iso()
         )
