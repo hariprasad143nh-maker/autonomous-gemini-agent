@@ -1,56 +1,24 @@
-\# Autonomous AI Agent with FastAPI \& Gemini
+# Autonomous AI Agent - Vibecodethon
 
+This project is a fully autonomous AI agent that reads the latest AI and tech news, uses editorial judgment to select the best topics, and publishes posts without human intervention. 
 
+## 🚀 Live Demo
+**App URL:** https://vibecodethon-agent.onrender.com
 
-A fully functional autonomous AI agent built with Python, FastAPI, and Google's Gemini 3.6 Flash model. This agent goes beyond simple chat by utilizing \*\*function calling (tools)\*\*, \*\*long-term SQLite memory\*\*, and \*\*automated background scheduling\*\* to execute tasks independently.
+## 🛠️ Tech Stack
+*   **Backend:** Python, FastAPI
+*   **Database:** SQLite
+*   **AI Model:** Llama 3.3 (via Groq API)
+*   **Automation:** APScheduler (Background tasks) & RSS Feeds
 
+## 🧠 Core Features
+*   **Topic Discovery:** Fetches the latest articles from HackerNews RSS.
+*   **Memory:** Remembers its last 5 posts to avoid repeating the same news.
+*   **Editorial Judgment:** Evaluates topics and actively rejects low-quality or irrelevant news.
+*   **Full Autonomy:** Runs on a continuous 4-hour background loop.
 
+## 🧪 How to Test (For Judges)
 
-\## 🚀 Features
-
-
-
-\* \*\*Tool Calling Capabilities:\*\* The agent can dynamically execute Python functions to gather real-time data before responding.
-
-&#x20; \* \*Web Retrieval:\* Fetches live tech news from HackerNews RSS.
-
-&#x20; \* \*Time Awareness:\* Accesses the system clock for real-time context.
-
-&#x20; \* \*Memory Access:\* Reads past interactions from the database.
-
-\* \*\*Automated Background Tasks:\*\* Uses `APScheduler` to run a chron-job every 30 minutes, fetching news, summarizing it, and logging it automatically without user input.
-
-\* \*\*Persistent Memory:\*\* Uses `SQLite3` to log all user interactions and automated tasks, allowing the agent to remember past context.
-
-\* \*\*FastAPI Backend:\*\* Fast, modern API with automatic interactive documentation (Swagger UI).
-
-
-
-\## 🛠️ Tech Stack
-
-
-
-\* \*\*Language:\*\* Python 3
-
-\* \*\*Framework:\*\* FastAPI, Uvicorn
-
-\* \*\*AI Model:\*\* Google Gemini API (`gemini-3.6-flash`)
-
-\* \*\*Database:\*\* SQLite3
-
-\* \*\*Task Scheduling:\*\* APScheduler
-
-
-
-\## ⚙️ Local Setup \& Installation
-
-
-
-1\. \*\*Clone the repository\*\*
-
-&#x20;  ```bash
-
-&#x20;  git clone \[https://github.com/hariprasad143nh-maker/autonomous-gemini-agent.git](https://github.com/hariprasad143nh-maker/autonomous-gemini-agent.git)
-
-&#x20;  cd autonomous-gemini-agent
-
+**1. Initialize the Agent:**
+```bash
+curl -X POST "[https://vibecodethon-agent.onrender.com/api/agent/init](https://vibecodethon-agent.onrender.com/api/agent/init)" -H "Content-Type: application/json" -d '{"persona": {"name": "Tech AI", "domain": "Artificial Intelligence"}}'
